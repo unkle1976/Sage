@@ -185,8 +185,21 @@ class OnboardingService:
     async def _handle_plants(self, user: User, message: str, session: AsyncSession) -> str:
         plant_names = self._parse_plant_names(message)
 
+        # Build search variants: original + stripped plural forms
+        search_variants: dict[str, str] = {}  # normalised -> original user input
+        for name in plant_names:
+            lower = name.lower()
+            search_variants[lower] = name
+            # Strip common plural suffixes to match DB (e.g. "tomatoes" -> "tomato")
+            if lower.endswith("oes"):
+                search_variants[lower[:-2]] = name
+            elif lower.endswith("ies"):
+                search_variants[lower[:-3] + "y"] = name
+            elif lower.endswith("s") and not lower.endswith("ss"):
+                search_variants[lower[:-1]] = name
+
         # Search PlantSpec for matches (case-insensitive)
-        conditions = [func.lower(PlantSpec.common_name) == name.lower() for name in plant_names]
+        conditions = [func.lower(PlantSpec.common_name) == variant for variant in search_variants]
         if conditions:
             from sqlalchemy import or_
 
@@ -202,7 +215,7 @@ class OnboardingService:
         garden = garden_result.scalar_one_or_none()
 
         # Create Plant records for matches
-        matched_names = {spec.common_name.lower() for spec in matched_specs}
+        matched_names_lower = {spec.common_name.lower() for spec in matched_specs}
         if garden:
             for spec in matched_specs:
                 plant = Plant(
@@ -212,8 +225,19 @@ class OnboardingService:
                 )
                 session.add(plant)
 
-        # Identify unrecognised plants
-        unrecognised = [name for name in plant_names if name.lower() not in matched_names]
+        # Identify unrecognised plants — check if any variant of the user's input matched
+        unrecognised = []
+        for name in plant_names:
+            lower = name.lower()
+            variants = {lower}
+            if lower.endswith("oes"):
+                variants.add(lower[:-2])
+            elif lower.endswith("ies"):
+                variants.add(lower[:-3] + "y")
+            elif lower.endswith("s") and not lower.endswith("ss"):
+                variants.add(lower[:-1])
+            if not variants & matched_names_lower:
+                unrecognised.append(name)
 
         # Complete onboarding
         user.onboarding_complete = True

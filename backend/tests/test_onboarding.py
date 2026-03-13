@@ -232,3 +232,62 @@ def test_parse_plant_names(onboarding):
     assert onboarding._parse_plant_names("tomatoes and basil") == ["tomatoes", "basil"]
     assert onboarding._parse_plant_names("just tomatoes") == ["just tomatoes"]
     assert onboarding._parse_plant_names("peas, beans, carrots, and lettuce") == ["peas", "beans", "carrots", "lettuce"]
+
+
+# --- Plural matching ---
+
+async def test_plants_plural_forms_matched(onboarding, mock_session):
+    """User types 'tomatoes' (plural) and DB has 'Tomato' (singular) — should match."""
+    user = User(whatsapp_phone="447700900000", onboarding_step="awaiting_plants")
+    user.id = uuid.uuid4()
+    user.experience_level = "beginner"
+    user.uk_region = "London"
+    user.soil_type = "clay"
+
+    tomato_spec = MagicMock()
+    tomato_spec.id = uuid.uuid4()
+    tomato_spec.common_name = "Tomato"
+
+    courgette_spec = MagicMock()
+    courgette_spec.id = uuid.uuid4()
+    courgette_spec.common_name = "Courgette"
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [tomato_spec, courgette_spec]
+    garden = MagicMock()
+    garden.id = uuid.uuid4()
+    mock_garden_result = MagicMock()
+    mock_garden_result.scalar_one_or_none.return_value = garden
+    mock_session.execute = AsyncMock(side_effect=[mock_result, mock_garden_result])
+
+    response = await onboarding.process_step(user, "tomatoes and courgettes", mock_session)
+    assert user.onboarding_complete is True
+    # Both should be matched — no "don't recognise" message
+    assert "don't recognise" not in response.lower()
+    assert "Tomato" in response
+    assert "Courgette" in response
+
+
+async def test_plants_berries_plural(onboarding, mock_session):
+    """'strawberries' → 'strawberry' should match Strawberry in DB."""
+    user = User(whatsapp_phone="447700900000", onboarding_step="awaiting_plants")
+    user.id = uuid.uuid4()
+    user.experience_level = "beginner"
+    user.uk_region = "South West"
+    user.soil_type = "clay"
+
+    strawberry_spec = MagicMock()
+    strawberry_spec.id = uuid.uuid4()
+    strawberry_spec.common_name = "Strawberry"
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [strawberry_spec]
+    garden = MagicMock()
+    garden.id = uuid.uuid4()
+    mock_garden_result = MagicMock()
+    mock_garden_result.scalar_one_or_none.return_value = garden
+    mock_session.execute = AsyncMock(side_effect=[mock_result, mock_garden_result])
+
+    response = await onboarding.process_step(user, "strawberries", mock_session)
+    assert user.onboarding_complete is True
+    assert "don't recognise" not in response.lower()
