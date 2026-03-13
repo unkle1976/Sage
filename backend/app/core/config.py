@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # App
     app_name: str = "Sage"
     debug: bool = False
+    sql_echo: bool = False  # Set True to see SQL queries (noisy in CLI)
 
     model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8"}
 

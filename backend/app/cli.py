@@ -12,6 +12,7 @@ import anthropic
 from sqlalchemy import select
 
 from app.agents.orchestrator import SageOrchestrator
+from app.agents.tool_handlers import build_tool_handlers
 from app.core.config import settings
 from app.core.database import async_session
 from app.models.conversation import ConversationMessage
@@ -21,6 +22,7 @@ from app.models.user import User
 from app.services.onboarding import OnboardingService
 from app.services.postcode import PostcodeService
 from app.services.soil import SoilService
+from app.services.weather import WeatherService
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +101,11 @@ async def main() -> None:
     print("\U0001f331 Sage Terminal Chat (type 'quit' to exit)\n")
 
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    orchestrator = SageOrchestrator(client=client)
+    soil_service = SoilService()
+    weather_service = WeatherService()
     onboarding = OnboardingService(
         postcode_service=PostcodeService(),
-        soil_service=SoilService(),
+        soil_service=soil_service,
     )
 
     async with async_session() as session:
@@ -118,6 +121,15 @@ async def main() -> None:
                 user_id=user.id, role="assistant", content=welcome,
             ))
             await session.commit()
+
+        # Build tool handlers bound to this user + session
+        tool_handlers = build_tool_handlers(
+            user=user,
+            session=session,
+            weather_service=weather_service,
+            soil_service=soil_service,
+        )
+        orchestrator = SageOrchestrator(client=client, tool_handlers=tool_handlers)
 
         # Main input loop
         while True:
@@ -139,6 +151,16 @@ async def main() -> None:
             # Route: onboarding or orchestrator
             if not user.onboarding_complete:
                 response_text = await onboarding.process_step(user, user_input, session)
+
+                # Rebuild tool handlers after onboarding steps (user fields change)
+                if user.onboarding_complete:
+                    tool_handlers = build_tool_handlers(
+                        user=user,
+                        session=session,
+                        weather_service=weather_service,
+                        soil_service=soil_service,
+                    )
+                    orchestrator = SageOrchestrator(client=client, tool_handlers=tool_handlers)
             else:
                 user_context = await _load_context(user, session)
                 history = await _load_history(user.id, session)
