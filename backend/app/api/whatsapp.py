@@ -4,10 +4,14 @@ from fastapi import APIRouter, Query, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 
 from app.core.config import settings
+from app.services.queue import MessageQueue
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Module-level queue instance — connected during app startup via lifespan
+message_queue: MessageQueue | None = None
 
 
 @router.get("/webhook/whatsapp")
@@ -42,7 +46,19 @@ async def receive_webhook(request: Request):
                         msg.get("from"),
                         msg.get("type"),
                     )
-                    # TODO: enqueue to Redis in Task 5
+                    if message_queue:
+                        text = ""
+                        if msg.get("type") == "text":
+                            text = msg.get("text", {}).get("body", "")
+                        await message_queue.enqueue_inbound(
+                            {
+                                "from": msg.get("from"),
+                                "message_id": msg.get("id"),
+                                "type": msg.get("type"),
+                                "text": text,
+                                "timestamp": msg.get("timestamp"),
+                            }
+                        )
 
                 statuses = value.get("statuses", [])
                 for status in statuses:
