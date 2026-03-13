@@ -58,11 +58,11 @@ async def test_welcome_message(onboarding):
 
 async def test_postcode_step_success(onboarding, new_user, mock_session):
     response = await onboarding.process_step(new_user, "BS3 1AB", mock_session)
-    assert "South West" in response
+    assert "Bristol" in response  # Uses admin_district for hyper-local naming
     assert "clay" in response
     assert new_user.onboarding_step == "awaiting_garden_type"
     assert new_user.postcode_outward == "BS3"
-    assert new_user.uk_region == "South West"
+    assert new_user.uk_region == "Bristol"  # admin_district, not region
     assert new_user.soil_type == "clay"
     mock_session.commit.assert_awaited_once()
 

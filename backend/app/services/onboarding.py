@@ -113,17 +113,24 @@ class OnboardingService:
         user.postcode_outward = result["outward_code"]
         user.latitude = result["latitude"]
         user.longitude = result["longitude"]
-        user.uk_region = result["region"]
+        # Use admin_district for hyper-local naming (e.g. "North East Lincolnshire" not "Yorkshire and The Humber")
+        user.uk_region = result.get("admin_district") or result["region"]
 
-        soil = await self.soil_service.get_soil_type(result["latitude"], result["longitude"])
+        soil = await self.soil_service.get_soil_type(
+            result["latitude"],
+            result["longitude"],
+            admin_district=result.get("admin_district"),
+            region=result.get("region"),
+        )
         user.soil_type = soil.get("soil_type", "unknown")
 
         user.onboarding_step = "awaiting_garden_type"
         await session.commit()
 
         soil_desc = user.soil_type if user.soil_type != "unknown" else "local"
+        location = result.get("admin_district") or result["region"]
         return (
-            f"Lovely! I can see you're in {result['region']} with {soil_desc} soil. "
+            f"Lovely! I can see you're in {location} with {soil_desc} soil. "
             "Now, what kind of growing space have you got?\n\n"
             "1. Back garden\n"
             "2. Allotment\n"

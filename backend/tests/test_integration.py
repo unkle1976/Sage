@@ -250,18 +250,20 @@ class TestFullMessageRoundTrip:
 
         # Postcode and soil services should have been called
         mock_postcode.lookup.assert_awaited_once_with("BS3 1AB")
-        mock_soil.get_soil_type.assert_awaited_once_with(51.438, -2.604)
+        mock_soil.get_soil_type.assert_awaited_once_with(
+            51.438, -2.604, admin_district="Bristol", region="South West"
+        )
 
-        # User record should be updated
+        # User record should be updated — uses admin_district for hyper-local
         assert user.postcode_outward == "BS3"
-        assert user.uk_region == "South West"
+        assert user.uk_region == "Bristol"
         assert user.soil_type == "clay"
         assert user.onboarding_step == "awaiting_garden_type"
 
-        # Response should mention region and ask about garden type
+        # Response should mention admin district and ask about garden type
         assert len(mock_queue.sent_messages) == 2
         postcode_resp = mock_queue.sent_messages[1]
-        assert "south west" in postcode_resp["text"].lower()
+        assert "bristol" in postcode_resp["text"].lower()
         assert "clay" in postcode_resp["text"].lower()
 
         # -- Step 3: User picks garden type "1" (back garden) ----------------
@@ -339,7 +341,7 @@ class TestFullMessageRoundTrip:
         # Second arg: user context dict with correct values
         user_context = call_args[0][1]
         assert user_context["experience_level"] == "beginner"
-        assert user_context["region"] == "South West"
+        assert user_context["region"] == "Bristol"
         assert user_context["soil_type"] == "clay"
         assert user_context["postcode"] == "BS3"
         assert user_context["garden_type"] == "back_garden"

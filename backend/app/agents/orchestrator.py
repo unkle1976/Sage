@@ -10,7 +10,7 @@ from app.agents.tools import TOOLS
 class SageOrchestrator:
     """Sage AI gardening companion — Claude API with tool use loop."""
 
-    MODEL = "claude-sonnet-4-20250514"
+    MODEL = "claude-3-haiku-20240307"
 
     def __init__(
         self,
