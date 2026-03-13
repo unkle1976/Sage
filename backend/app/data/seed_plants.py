@@ -84,18 +84,23 @@ async def seed(session: AsyncSession) -> dict[str, int]:
     plants_created = 0
     calendars_created = 0
 
+    new_plants: list[tuple[PlantSpec, dict]] = []
     for entry in plants_data:
         if entry["common_name"] in existing_names:
             continue
-
         plant = _plant_dict_to_model(entry)
         session.add(plant)
+        new_plants.append((plant, entry))
+        plants_created += 1
 
+    # Flush plants first so FKs exist for calendar rows
+    if new_plants:
+        await session.flush()
+
+    for plant, entry in new_plants:
         calendar_rows = _calendar_entries(plant.id, entry)
         for cal in calendar_rows:
             session.add(cal)
-
-        plants_created += 1
         calendars_created += len(calendar_rows)
 
     await session.commit()
