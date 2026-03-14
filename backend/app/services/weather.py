@@ -78,5 +78,32 @@ class WeatherService:
             "max_temperature": max_temp,
         }
 
+    async def get_weather_snapshot(self, lat: float, lon: float) -> dict:
+        """Get a compact weather snapshot for embedding in context events."""
+        response = await self._client.get(
+            "/forecast",
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "current_weather": True,
+                "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+                "timezone": "Europe/London",
+                "forecast_days": 1,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        current = data.get("current_weather", {})
+        daily = data.get("daily", {})
+
+        return {
+            "temp_c": current.get("temperature"),
+            "wind_kmh": current.get("windspeed"),
+            "temp_max_c": daily.get("temperature_2m_max", [None])[0],
+            "temp_min_c": daily.get("temperature_2m_min", [None])[0],
+            "rainfall_mm": daily.get("precipitation_sum", [None])[0],
+        }
+
     async def close(self):
         await self._client.aclose()
