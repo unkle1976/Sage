@@ -1,9 +1,12 @@
 import re
+from datetime import date
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.engagement_profile import EngagementProfile
 from app.models.garden import Garden
+from app.models.growing_season import GrowingSeason
 from app.models.plant import Plant
 from app.models.plant_spec import PlantSpec
 from app.models.user import User
@@ -249,6 +252,25 @@ class OnboardingService:
         # Complete onboarding
         user.onboarding_complete = True
         user.onboarding_step = "complete"
+
+        # Create default engagement profile
+        profile = EngagementProfile(
+            user_id=user.id,
+            preferred_time="morning",
+            notification_level="normal",
+        )
+        session.add(profile)
+
+        # Create initial growing season
+        current_year = date.today().year
+        season = GrowingSeason(
+            user_id=user.id,
+            year=current_year,
+            label=f"Spring/Summer {current_year}",
+            started_at=date.today(),
+        )
+        session.add(season)
+
         await session.commit()
 
         # Build response
