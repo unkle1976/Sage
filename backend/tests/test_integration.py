@@ -230,16 +230,32 @@ class TestFullMessageRoundTrip:
         user = shared_state["user"]
         assert user is not None, "User should be created on first message"
         assert user.whatsapp_phone == PHONE
-        assert user.onboarding_step == "awaiting_postcode"
+        assert user.onboarding_step == "awaiting_first_plant"
         assert not user.onboarding_complete  # None or False — both mean not onboarded
 
-        # Welcome message should be enqueued (asks for postcode)
+        # Welcome message should be enqueued (asks what to grow)
         assert len(mock_queue.sent_messages) == 1
         welcome = mock_queue.sent_messages[0]
         assert welcome["to"] == PHONE
-        assert "postcode" in welcome["text"].lower()
+        assert "grow" in welcome["text"].lower()
 
-        # -- Step 2: User sends postcode "BS3 1AB" ---------------------------
+        # -- Step 2: User says "tomatoes" ------------------------------------
+        await send_message(
+            "tomatoes",
+            mock_session_factory,
+            mock_queue,
+            real_onboarding,
+            mock_orchestrator,
+        )
+
+        assert user.onboarding_step == "awaiting_postcode"
+
+        # Response should ask for postcode
+        assert len(mock_queue.sent_messages) == 2
+        plant_resp = mock_queue.sent_messages[1]
+        assert "postcode" in plant_resp["text"].lower()
+
+        # -- Step 3: User sends postcode "BS3 1AB" ---------------------------
         await send_message(
             "BS3 1AB",
             mock_session_factory,
@@ -254,75 +270,25 @@ class TestFullMessageRoundTrip:
             51.438, -2.604, admin_district="Bristol", region="South West"
         )
 
-        # User record should be updated — uses admin_district for hyper-local
+        # User record should be updated
         assert user.postcode_outward == "BS3"
         assert user.uk_region == "Bristol"
         assert user.soil_type == "clay"
-        assert user.onboarding_step == "awaiting_garden_type"
+        assert user.onboarding_complete is True
+        assert user.onboarding_step == "complete"
 
-        # Response should mention admin district and ask about garden type
-        assert len(mock_queue.sent_messages) == 2
-        postcode_resp = mock_queue.sent_messages[1]
-        assert "bristol" in postcode_resp["text"].lower()
-        assert "clay" in postcode_resp["text"].lower()
-
-        # -- Step 3: User picks garden type "1" (back garden) ----------------
-        await send_message(
-            "1",
-            mock_session_factory,
-            mock_queue,
-            real_onboarding,
-            mock_orchestrator,
-        )
-
-        assert user.onboarding_step == "awaiting_experience"
         # A Garden record should have been created
         garden = shared_state.get("garden")
         assert garden is not None, "Garden record should be created"
         assert garden.garden_type == "back_garden"
         assert garden.is_primary is True
 
-        # Response should ask about experience
+        # Response should mention location
         assert len(mock_queue.sent_messages) == 3
-        garden_resp = mock_queue.sent_messages[2]
-        assert "experience" in garden_resp["text"].lower()
+        postcode_resp = mock_queue.sent_messages[2]
+        assert "bristol" in postcode_resp["text"].lower()
 
-        # -- Step 4: User picks experience "1" (beginner) --------------------
-        await send_message(
-            "1",
-            mock_session_factory,
-            mock_queue,
-            real_onboarding,
-            mock_orchestrator,
-        )
-
-        assert user.experience_level == "beginner"
-        assert user.onboarding_step == "awaiting_plants"
-
-        # Response should ask what to grow
-        assert len(mock_queue.sent_messages) == 4
-        exp_resp = mock_queue.sent_messages[3]
-        assert "grow" in exp_resp["text"].lower()
-
-        # -- Step 5: User says "tomatoes" ------------------------------------
-        await send_message(
-            "tomatoes",
-            mock_session_factory,
-            mock_queue,
-            real_onboarding,
-            mock_orchestrator,
-        )
-
-        # User should now be fully onboarded
-        assert user.onboarding_complete is True
-        assert user.onboarding_step == "complete"
-
-        # Response should confirm setup
-        assert len(mock_queue.sent_messages) == 5
-        plants_resp = mock_queue.sent_messages[4]
-        assert "set" in plants_resp["text"].lower() or "\U0001f389" in plants_resp["text"]
-
-        # -- Step 6: Onboarded user asks a garden question -------------------
+        # -- Step 4: Onboarded user asks a garden question -------------------
         await send_message(
             "When should I plant my tomatoes?",
             mock_session_factory,
@@ -351,8 +317,8 @@ class TestFullMessageRoundTrip:
         assert isinstance(history, list)
 
         # Response should be the orchestrator's canned reply
-        assert len(mock_queue.sent_messages) == 6
-        chat_resp = mock_queue.sent_messages[5]
+        assert len(mock_queue.sent_messages) == 4
+        chat_resp = mock_queue.sent_messages[3]
         assert chat_resp["to"] == PHONE
         assert chat_resp["text"] == "March is a great time to start your tomatoes indoors!"
         assert chat_resp["type"] == "text"
@@ -376,7 +342,7 @@ class TestFullMessageRoundTrip:
 
         mock_orchestrator.chat.assert_not_awaited()
         assert len(mock_queue.sent_messages) == 1
-        assert "postcode" in mock_queue.sent_messages[0]["text"].lower()
+        assert "grow" in mock_queue.sent_messages[0]["text"].lower()
 
     async def test_mid_onboarding_user_not_routed_to_orchestrator(
         self,
@@ -389,8 +355,8 @@ class TestFullMessageRoundTrip:
         """A user partway through onboarding should stay in onboarding flow."""
         # First message creates user
         await send_message("Hi", mock_session_factory, mock_queue, real_onboarding, mock_orchestrator)
-        # Second message is the postcode step
-        await send_message("BS3 1AB", mock_session_factory, mock_queue, real_onboarding, mock_orchestrator)
+        # Second message is the first plant step (moves to awaiting_postcode)
+        await send_message("tomatoes", mock_session_factory, mock_queue, real_onboarding, mock_orchestrator)
 
         # Orchestrator should still not have been called
         mock_orchestrator.chat.assert_not_awaited()
@@ -406,10 +372,10 @@ class TestFullMessageRoundTrip:
     ):
         """Every message exchange should produce a user + assistant ConversationMessage."""
         await send_message("Hi", mock_session_factory, mock_queue, real_onboarding, mock_orchestrator)
-        await send_message("BS3 1AB", mock_session_factory, mock_queue, real_onboarding, mock_orchestrator)
+        await send_message("tomatoes", mock_session_factory, mock_queue, real_onboarding, mock_orchestrator)
 
         # Each call adds User (first call only) + ConversationMessage(user) + ConversationMessage(assistant)
-        # Plus Garden in step 3, etc. Filter to ConversationMessages only.
+        # Filter to ConversationMessages only.
         conv_messages = [
             obj for obj in shared_state["objects"]
             if isinstance(obj, ConversationMessage)
@@ -418,16 +384,17 @@ class TestFullMessageRoundTrip:
         # 2 calls x 2 messages each = 4 ConversationMessages
         assert len(conv_messages) == 4
 
-        # First pair: user said "Hi", assistant sent welcome
+        # First pair: user said "Hi", assistant sent welcome (asks what to grow)
         assert conv_messages[0].role == "user"
         assert conv_messages[0].content == "Hi"
         assert conv_messages[1].role == "assistant"
-        assert "postcode" in conv_messages[1].content.lower()
+        assert "grow" in conv_messages[1].content.lower()
 
-        # Second pair: user said "BS3 1AB", assistant confirmed postcode
+        # Second pair: user said "tomatoes", assistant asked for postcode
         assert conv_messages[2].role == "user"
-        assert conv_messages[2].content == "BS3 1AB"
+        assert conv_messages[2].content == "tomatoes"
         assert conv_messages[3].role == "assistant"
+        assert "postcode" in conv_messages[3].content.lower()
 
     async def test_outbound_messages_have_correct_shape(
         self,

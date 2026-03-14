@@ -111,7 +111,7 @@ async def _find_or_create_user(session, phone: str) -> tuple[User, bool]:
     if user is not None:
         return user, False
 
-    user = User(whatsapp_phone=phone, onboarding_step="awaiting_postcode")
+    user = User(whatsapp_phone=phone, onboarding_step="awaiting_first_plant")
     session.add(user)
     await session.flush()  # Assign id
     return user, True
