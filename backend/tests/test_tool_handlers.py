@@ -52,6 +52,13 @@ def mock_weather():
         "forecast_rainfall_mm": 12.0,
         "max_temperature": 14,
     })
+    service.get_weather_snapshot = AsyncMock(return_value={
+        "temp_c": 11.5,
+        "wind_kmh": 15.0,
+        "temp_max_c": 14.0,
+        "temp_min_c": 4.0,
+        "rainfall_mm": 0.5,
+    })
     return service
 
 
@@ -141,7 +148,7 @@ async def test_search_plant_empty_query(handlers):
 
 # --- Context event logging ---
 
-async def test_log_context_event(handlers, mock_session):
+async def test_log_context_event(handlers, mock_session, mock_weather):
     garden = MagicMock()
     garden.id = uuid.uuid4()
     mock_garden_result = MagicMock()
@@ -156,3 +163,50 @@ async def test_log_context_event(handlers, mock_session):
     assert result["event_type"] == "planting"
     mock_session.add.assert_called_once()
     mock_session.commit.assert_awaited_once()
+
+    # Verify weather snapshot was captured
+    mock_weather.get_weather_snapshot.assert_awaited_once()
+    saved_event = mock_session.add.call_args[0][0]
+    assert saved_event.weather_snapshot is not None
+    assert saved_event.weather_snapshot["temp_c"] == 11.5
+
+
+async def test_log_context_event_weather_failure(handlers, mock_session, mock_weather):
+    """Weather failure should not block event logging."""
+    garden = MagicMock()
+    garden.id = uuid.uuid4()
+    mock_garden_result = MagicMock()
+    mock_garden_result.scalar_one_or_none.return_value = garden
+    mock_session.execute = AsyncMock(return_value=mock_garden_result)
+
+    mock_weather.get_weather_snapshot = AsyncMock(side_effect=Exception("API down"))
+
+    result = await handlers["log_context_event"]({
+        "event_type": "observation",
+        "summary": "Leaves looking yellow",
+    })
+    assert result["logged"] is True
+    saved_event = mock_session.add.call_args[0][0]
+    assert saved_event.weather_snapshot is None
+
+
+async def test_log_context_event_no_location(mock_session, mock_weather):
+    """No weather call when user has no location."""
+    user = User(whatsapp_phone="000", onboarding_complete=True)
+    user.id = uuid.uuid4()
+    h = build_tool_handlers(user=user, session=mock_session, weather_service=mock_weather)
+
+    garden = MagicMock()
+    garden.id = uuid.uuid4()
+    mock_garden_result = MagicMock()
+    mock_garden_result.scalar_one_or_none.return_value = garden
+    mock_session.execute = AsyncMock(return_value=mock_garden_result)
+
+    result = await h["log_context_event"]({
+        "event_type": "observation",
+        "summary": "Test event",
+    })
+    assert result["logged"] is True
+    mock_weather.get_weather_snapshot.assert_not_awaited()
+    saved_event = mock_session.add.call_args[0][0]
+    assert saved_event.weather_snapshot is None

@@ -212,6 +212,16 @@ def build_tool_handlers(
         garden_result = await session.execute(garden_stmt)
         garden = garden_result.scalar_one_or_none()
 
+        # Auto-capture weather snapshot if user has location
+        weather_snapshot = None
+        lat = float(user.latitude) if user.latitude else None
+        lon = float(user.longitude) if user.longitude else None
+        if lat is not None and lon is not None:
+            try:
+                weather_snapshot = await _weather.get_weather_snapshot(lat, lon)
+            except Exception:
+                pass  # Weather failure must not block event logging
+
         event = ContextEvent(
             user_id=user.id,
             garden_id=garden.id if garden else None,
@@ -219,6 +229,7 @@ def build_tool_handlers(
             source_agent="sage",
             summary=summary,
             detail=detail,
+            weather_snapshot=weather_snapshot,
         )
         session.add(event)
         await session.commit()
