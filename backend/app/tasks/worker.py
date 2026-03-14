@@ -3,9 +3,12 @@
 import logging
 
 from arq.connections import RedisSettings
+from arq.cron import cron
 
 from app.core.config import settings
+from app.tasks.proactive_scheduler import run_proactive_checks
 from app.tasks.process_message import process_inbound_message
+from app.tasks.weather_logger import log_daily_weather
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,9 @@ class WorkerSettings:
     """ARQ worker settings — pass this class to ``arq worker``."""
 
     functions = [process_inbound_message]
+    cron_jobs = [
+        cron(log_daily_weather, hour=6, minute=0),
+    ]
     redis_settings = parse_redis_url(settings.redis_url)
     on_startup = startup
     on_shutdown = shutdown
