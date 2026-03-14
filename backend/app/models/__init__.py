@@ -9,6 +9,9 @@ from app.models.conversation import ConversationMessage
 from app.models.achievement import Achievement
 from app.models.photo_record import PhotoRecord
 from app.models.growing_calendar import GrowingCalendar
+from app.models.growing_season import GrowingSeason
+from app.models.weather_log import WeatherLog
+from app.models.engagement_profile import EngagementProfile
 
 __all__ = [
     "Base",
@@ -22,4 +25,7 @@ __all__ = [
     "Achievement",
     "PhotoRecord",
     "GrowingCalendar",
+    "GrowingSeason",
+    "WeatherLog",
+    "EngagementProfile",
 ]

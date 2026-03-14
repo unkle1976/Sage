@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, SmallInteger, String, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,12 @@ class Plant(Base):
     health_score: Mapped[int] = mapped_column(SmallInteger, default=100)
     notes: Mapped[dict | None] = mapped_column(JSONB)
     harvest_log: Mapped[dict | None] = mapped_column(JSONB)
+    growing_season_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("growing_seasons.id"), index=True)
+    parent_plant_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("plants.id"))
+    seed_source: Mapped[str | None] = mapped_column(String(30))
+    final_outcome: Mapped[str | None] = mapped_column(String(20))
+    yield_total_kg: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    season_notes: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), onupdate=func.now())

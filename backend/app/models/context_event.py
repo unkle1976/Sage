@@ -20,6 +20,7 @@ class ContextEvent(Base):
     source_agent: Mapped[str | None] = mapped_column(String(50))
     summary: Mapped[str] = mapped_column(Text)
     detail: Mapped[dict | None] = mapped_column(JSONB)
+    weather_snapshot: Mapped[dict | None] = mapped_column(JSONB)
     reasoning_trace: Mapped[str | None] = mapped_column(Text)
     related_events: Mapped[dict | None] = mapped_column(JSONB)  # array of UUIDs
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(3, 2))
