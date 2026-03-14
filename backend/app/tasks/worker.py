@@ -42,6 +42,7 @@ class WorkerSettings:
     functions = [process_inbound_message]
     cron_jobs = [
         cron(log_daily_weather, hour=6, minute=0),
+        cron(run_proactive_checks, hour={7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}),
     ]
     redis_settings = parse_redis_url(settings.redis_url)
     on_startup = startup
