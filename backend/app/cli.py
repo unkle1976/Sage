@@ -42,7 +42,7 @@ async def _find_or_create_test_user(session) -> tuple[User, bool]:
     user = User(
         whatsapp_phone=TEST_PHONE,
         display_name="CLI Tester",
-        onboarding_step="awaiting_postcode",
+        onboarding_step="awaiting_first_plant",
     )
     session.add(user)
     await session.flush()
