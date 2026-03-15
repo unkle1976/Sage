@@ -12,12 +12,15 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.data.plant_milestones import PLANT_MILESTONES
 from app.models.context_event import ContextEvent
 from app.models.garden import Garden
 from app.models.growing_calendar import GrowingCalendar
+from app.models.growing_plan_item import GrowingPlanItem
 from app.models.plant import Plant
 from app.models.plant_spec import PlantSpec
 from app.models.user import User
+from app.services.growing_plan import GrowingPlanService
 from app.services.soil import SoilService, UK_SOIL_DEFAULTS, UK_REGION_SOIL_DEFAULTS
 from app.services.weather import WeatherService
 
@@ -236,6 +239,293 @@ def build_tool_handlers(
 
         return {"logged": True, "event_type": event_type, "summary": summary}
 
+    async def manage_growing_plan(_input: dict) -> dict:
+        action = _input.get("action", "list")
+        plant_name = (_input.get("plant_name") or "").strip().lower()
+
+        from sqlalchemy import or_
+
+        if action == "add":
+            if not plant_name:
+                return {"error": "plant_name is required for the 'add' action."}
+
+            # Find matching PlantSpec
+            variants = {plant_name}
+            if plant_name.endswith("oes"):
+                variants.add(plant_name[:-2])
+            elif plant_name.endswith("ies"):
+                variants.add(plant_name[:-3] + "y")
+            elif plant_name.endswith("s") and not plant_name.endswith("ss"):
+                variants.add(plant_name[:-1])
+
+            conditions = [func.lower(PlantSpec.common_name) == v for v in variants]
+            conditions.append(func.lower(PlantSpec.common_name).like(f"%{plant_name}%"))
+            stmt = select(PlantSpec).where(or_(*conditions)).limit(1)
+            result = await session.execute(stmt)
+            spec = result.scalar_one_or_none()
+
+            if not spec:
+                return {"error": f"No plant found matching '{plant_name}'."}
+
+            # Check timing via GrowingCalendar
+            today = datetime.now().date()
+            cal_stmt = select(GrowingCalendar).where(
+                GrowingCalendar.plant_spec_id == spec.id
+            )
+            cal_result = await session.execute(cal_stmt)
+            cal_entries = cal_result.scalars().all()
+
+            timing = GrowingPlanService.check_timing(cal_entries, today)
+
+            # Determine optimal sow window from calendar
+            optimal_start = None
+            optimal_end = None
+            for entry in cal_entries:
+                if entry.activity in ("sow_indoors", "sow_outdoors"):
+                    start_date = datetime(today.year, entry.month_start, 1).date()
+                    end_date = datetime(today.year, entry.month_end, 28).date()
+                    if optimal_start is None or start_date < optimal_start:
+                        optimal_start = start_date
+                    if optimal_end is None or end_date > optimal_end:
+                        optimal_end = end_date
+
+            item = GrowingPlanItem(
+                user_id=user.id,
+                plant_spec_id=spec.id,
+                status=timing.get("status", "queued"),
+                optimal_sow_start=optimal_start,
+                optimal_sow_end=optimal_end,
+            )
+            session.add(item)
+            await session.commit()
+
+            return {
+                "added": True,
+                "plant": spec.common_name,
+                "timing": timing,
+                "optimal_sow_start": str(optimal_start) if optimal_start else None,
+                "optimal_sow_end": str(optimal_end) if optimal_end else None,
+            }
+
+        elif action == "list":
+            stmt = (
+                select(GrowingPlanItem, PlantSpec.common_name)
+                .join(PlantSpec, GrowingPlanItem.plant_spec_id == PlantSpec.id)
+                .where(GrowingPlanItem.user_id == user.id)
+                .order_by(GrowingPlanItem.optimal_sow_start.asc().nullslast())
+            )
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            items = []
+            for item, name in rows:
+                items.append({
+                    "plant": name,
+                    "status": item.status,
+                    "optimal_sow_start": str(item.optimal_sow_start) if item.optimal_sow_start else None,
+                    "optimal_sow_end": str(item.optimal_sow_end) if item.optimal_sow_end else None,
+                    "added_at": item.added_at.isoformat() if item.added_at else None,
+                    "activated_at": item.activated_at.isoformat() if item.activated_at else None,
+                })
+            return {"items": items, "count": len(items)}
+
+        elif action == "check_timing":
+            if not plant_name:
+                return {"error": "plant_name is required for 'check_timing'."}
+
+            variants = {plant_name}
+            if plant_name.endswith("s") and not plant_name.endswith("ss"):
+                variants.add(plant_name[:-1])
+
+            conditions = [func.lower(PlantSpec.common_name) == v for v in variants]
+            conditions.append(func.lower(PlantSpec.common_name).like(f"%{plant_name}%"))
+            stmt = select(PlantSpec).where(or_(*conditions)).limit(1)
+            result = await session.execute(stmt)
+            spec = result.scalar_one_or_none()
+
+            if not spec:
+                return {"error": f"No plant found matching '{plant_name}'."}
+
+            today = datetime.now().date()
+            cal_stmt = select(GrowingCalendar).where(
+                GrowingCalendar.plant_spec_id == spec.id
+            )
+            cal_result = await session.execute(cal_stmt)
+            cal_entries = cal_result.scalars().all()
+
+            timing = GrowingPlanService.check_timing(cal_entries, today)
+            return {"plant": spec.common_name, "timing": timing}
+
+        elif action == "activate":
+            if not plant_name:
+                return {"error": "plant_name is required for 'activate'."}
+
+            stmt = (
+                select(GrowingPlanItem)
+                .join(PlantSpec, GrowingPlanItem.plant_spec_id == PlantSpec.id)
+                .where(
+                    GrowingPlanItem.user_id == user.id,
+                    func.lower(PlantSpec.common_name) == plant_name,
+                )
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            item = result.scalar_one_or_none()
+
+            if not item:
+                return {"error": f"No plan item found for '{plant_name}'."}
+
+            item.status = "active"
+            item.activated_at = datetime.now()
+            await session.commit()
+            return {"activated": True, "plant": plant_name}
+
+        elif action == "skip":
+            if not plant_name:
+                return {"error": "plant_name is required for 'skip'."}
+
+            stmt = (
+                select(GrowingPlanItem)
+                .join(PlantSpec, GrowingPlanItem.plant_spec_id == PlantSpec.id)
+                .where(
+                    GrowingPlanItem.user_id == user.id,
+                    func.lower(PlantSpec.common_name) == plant_name,
+                )
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            item = result.scalar_one_or_none()
+
+            if not item:
+                return {"error": f"No plan item found for '{plant_name}'."}
+
+            item.status = "skipped"
+            await session.commit()
+            return {"skipped": True, "plant": plant_name}
+
+        else:
+            return {"error": f"Unknown action: {action}"}
+
+    async def advance_milestone(_input: dict) -> dict:
+        plant_name = (_input.get("plant_name") or "").strip().lower()
+        user_confirmed = _input.get("user_confirmed", False)
+        notes = _input.get("notes")
+
+        if not plant_name:
+            return {"error": "plant_name is required."}
+
+        # Find the user's garden and plant
+        garden_stmt = select(Garden).where(
+            Garden.user_id == user.id, Garden.is_primary.is_(True)
+        )
+        garden_result = await session.execute(garden_stmt)
+        garden = garden_result.scalar_one_or_none()
+
+        if not garden:
+            return {"error": "No garden found for user."}
+
+        # Search for the plant by name/variety
+        plant_stmt = (
+            select(Plant)
+            .join(PlantSpec, Plant.plant_spec_id == PlantSpec.id, isouter=True)
+            .where(
+                Plant.garden_id == garden.id,
+                Plant.is_active.is_(True),
+                (
+                    func.lower(PlantSpec.common_name).like(f"%{plant_name}%")
+                    | func.lower(Plant.variety).like(f"%{plant_name}%")
+                ),
+            )
+            .limit(1)
+        )
+        plant_result = await session.execute(plant_stmt)
+        plant = plant_result.scalar_one_or_none()
+
+        if not plant:
+            return {"error": f"No active plant found matching '{plant_name}'."}
+
+        # Look up the milestone data for this plant
+        # Try to match against PLANT_MILESTONES keys
+        spec_stmt = select(PlantSpec).where(PlantSpec.id == plant.plant_spec_id)
+        spec_result = await session.execute(spec_stmt)
+        spec = spec_result.scalar_one_or_none()
+
+        milestone_key = None
+        if spec:
+            # Try exact match, then normalised match
+            candidate = spec.common_name.lower().replace(" ", "_")
+            if candidate in PLANT_MILESTONES:
+                milestone_key = candidate
+            else:
+                # Try partial match
+                for key in PLANT_MILESTONES:
+                    if key in candidate or candidate in key:
+                        milestone_key = key
+                        break
+
+        milestones = (
+            PLANT_MILESTONES[milestone_key]["milestones"]
+            if milestone_key
+            else None
+        )
+
+        current_index = plant.next_milestone_index or 0
+        new_index = current_index + 1
+
+        new_stage = None
+        next_milestone_info = None
+        next_date = None
+
+        if milestones and new_index < len(milestones):
+            next_ms = milestones[new_index]
+            new_stage = next_ms["stage"]
+            next_milestone_info = next_ms.get("check_in")
+
+            # Calculate next milestone date from planting_date
+            if plant.planting_date and new_index + 1 < len(milestones):
+                from datetime import timedelta
+                future_ms = milestones[new_index + 1]
+                next_date = plant.planting_date + timedelta(days=future_ms["day"])
+        elif milestones and new_index >= len(milestones):
+            new_stage = milestones[-1]["stage"]
+            next_milestone_info = "All milestones complete!"
+        else:
+            new_stage = plant.growth_stage
+
+        # Update the plant record
+        plant.next_milestone_index = new_index
+        if new_stage:
+            plant.growth_stage = new_stage
+        if next_date:
+            plant.next_milestone_date = next_date
+
+        # Log a context event
+        event = ContextEvent(
+            user_id=user.id,
+            garden_id=garden.id,
+            event_type="milestone",
+            source_agent="sage",
+            summary=f"{spec.common_name if spec else plant_name} reached milestone: {new_stage}",
+            detail={
+                "plant_name": spec.common_name if spec else plant_name,
+                "milestone_index": new_index,
+                "stage": new_stage,
+                "user_confirmed": user_confirmed,
+                "notes": notes,
+            },
+        )
+        session.add(event)
+        await session.commit()
+
+        return {
+            "advanced": True,
+            "plant": spec.common_name if spec else plant_name,
+            "new_stage": new_stage,
+            "milestone_index": new_index,
+            "next_milestone_date": str(next_date) if next_date else None,
+            "next_check_in": next_milestone_info,
+        }
+
     return {
         "get_weather_forecast": get_weather_forecast,
         "check_frost_risk": check_frost_risk,
@@ -244,4 +534,6 @@ def build_tool_handlers(
         "search_plant_database": search_plant_database,
         "get_growing_calendar": get_growing_calendar,
         "log_context_event": log_context_event,
+        "manage_growing_plan": manage_growing_plan,
+        "advance_milestone": advance_milestone,
     }

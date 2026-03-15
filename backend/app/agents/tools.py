@@ -115,4 +115,53 @@ TOOLS = [
             "required": ["event_type", "summary"],
         },
     },
+    {
+        "name": "manage_growing_plan",
+        "description": (
+            "Add, check, or list items on the user's seasonal growing plan. "
+            "Use when the user mentions wanting to grow something, or to check "
+            "what's next on their plan."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["add", "list", "check_timing", "activate", "skip"],
+                    "description": "What to do with the growing plan",
+                },
+                "plant_name": {
+                    "type": "string",
+                    "description": "Name of the plant (for add/check_timing/activate/skip)",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "advance_milestone",
+        "description": (
+            "Record that a plant has reached the next growth milestone. "
+            "Use when the user confirms progress like 'they have sprouted' "
+            "or 'I have transplanted them'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "plant_name": {
+                    "type": "string",
+                    "description": "Name or variety of the plant",
+                },
+                "user_confirmed": {
+                    "type": "boolean",
+                    "description": "Whether the user explicitly confirmed this milestone",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Any details the user shared about the milestone",
+                },
+            },
+            "required": ["plant_name"],
+        },
+    },
 ]
