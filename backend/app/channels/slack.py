@@ -168,9 +168,9 @@ def create_slack_app() -> AsyncApp:
                     history = await _load_history(user.id, session)
                     response_text = await orchestrator.chat(user_text, user_context, history)
 
-                # Guard against empty responses (tool-only turns with no text)
+                # Guard against empty responses (should be rare after orchestrator fix)
                 if not response_text or not response_text.strip():
-                    response_text = "Got it! 👍"
+                    response_text = "Noted! What's next on the growing front?"
 
                 # Persist both messages
                 session.add(ConversationMessage(

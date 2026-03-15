@@ -112,7 +112,9 @@ class OnboardingService:
         session.add(garden)
 
         # Match plants from user's first message using fuzzy matching
-        raw_text = (user.preferences or {}).get("first_plant_raw", "")
+        # Check both keys for backward compatibility (old code stored as "first_plant")
+        prefs = user.preferences or {}
+        raw_text = prefs.get("first_plant_raw", "") or prefs.get("first_plant", "")
         matched_specs = await self._match_plants_from_text(raw_text, session)
         matched_names = []
         for spec in matched_specs:

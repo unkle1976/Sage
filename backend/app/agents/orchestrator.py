@@ -63,7 +63,18 @@ class SageOrchestrator:
             text_parts = [
                 block.text for block in response.content if block.type == "text"
             ]
-            return "\n".join(text_parts)
+            final_text = "\n".join(text_parts).strip()
+
+            # If Claude only did tool calls with no text, ask it to respond to the user
+            if not final_text:
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({
+                    "role": "user",
+                    "content": "Now respond to me naturally based on what you just did. Don't mention tools.",
+                })
+                continue
+
+            return final_text
 
     async def _execute_tool(self, name: str, input_data: dict) -> dict:
         """Dispatch a tool call to the registered handler."""
