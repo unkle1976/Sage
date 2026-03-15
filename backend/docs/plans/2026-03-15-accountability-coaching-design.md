@@ -470,6 +470,164 @@ How we know if the psychology is working:
 
 ---
 
+## 9. Feature Roadmap
+
+Features identified during the accountability coaching design process. Ordered by impact and feasibility.
+
+### 9.1 Companion Planting Intelligence
+
+**Priority:** High — can implement now via system prompt + PlantSpec data
+
+When a user has multiple plants, Sage proactively suggests beneficial pairings and warns about bad neighbours:
+
+- "Your tomatoes and basil are a great combo — basil repels aphids and they grow well together. Plant them close"
+- "Keep your runner beans away from your onions — they don't get on"
+
+**Data model:** Add `companions` and `antagonists` JSONB fields to PlantSpec, containing lists of compatible/incompatible plant names. The orchestrator checks these when the user adds a new plant to their garden.
+
+### 9.2 Harvest Logging & Value Tracking
+
+**Priority:** High — strong retention mechanic (identity reinforcement + loss aversion)
+
+When users harvest, Sage asks "How many did you get?" and logs it. End of season, Sage summarises:
+
+- "You grew 23 cucumbers, 4kg of tomatoes, and enough basil to last all summer"
+- "That's roughly £45 worth from the supermarket — and yours tasted better"
+
+**Data model:** New `Harvest` model: `plant_id`, `quantity`, `unit` (count/kg/bunches), `harvested_at`. Estimated retail value per plant in PlantSpec.
+
+**Psychology:** This is identity reinforcement (look what you grew), loss aversion (look what you'd lose), and competence feedback (you're getting better) all in one feature.
+
+### 9.3 Glut Advice
+
+**Priority:** Medium — common real-world problem, high engagement moment
+
+"I've got 30 courgettes and I can't eat them fast enough" is a genuinely common situation. Sage helps with preserving, freezing, and giving away — this IS gardening advice, not recipes:
+
+- "Slice them and freeze — they'll keep for months"
+- "Make courgette chutney — you'll thank yourself in winter" (preserving is gardening-adjacent)
+- "Give them to neighbours. Seriously, everyone's in the same boat with courgettes in August"
+
+**Boundary:** Sage helps with preserving and storage (gardening), not cooking (recipes). "Freeze them sliced" is fine. "Here's a recipe for ratatouille" is not.
+
+### 9.4 Second Season Intelligence
+
+**Priority:** High — this is where the context graph becomes incredibly powerful
+
+For returning users, Sage references what happened last year:
+
+- "Your tomatoes got blight in August last year. This year, try growing them under cover or pick a blight-resistant variety like Crimson Crush"
+- "You did really well with lettuce — want to try a different variety this time? Little Gem is a step up from the butterheads you grew"
+- "Last year you planted everything in March and ran out of windowsill space. Want to stagger them this time?"
+
+**No new infrastructure needed** — the context graph already stores this. It's about making the system prompt aware of previous seasons and using the data in recommendations.
+
+### 9.5 Photo Recognition (Future)
+
+**Priority:** Medium-High — killer feature but needs multimodal capability
+
+"My plant looks weird" → user sends photo → Sage identifies the problem:
+
+- Pest identification: "That's aphids — spray them off with a hose, they'll be fine"
+- Disease identification: "That yellowing pattern looks like blight — here's what to do"
+- Growth stage confirmation: "Those are the first true leaves — time to pot them on"
+- "Is this ready to pick?" — "Yeah, that cucumber's perfect. Pick it today before it gets too big"
+
+**Implementation:** Requires multimodal API (Claude Vision). WhatsApp supports image messages. Parse image, generate diagnosis, suggest action.
+
+**Safety guardrail:** Sage should always caveat uncertain identifications: "That looks like it could be powdery mildew, but I'm not 100% from the photo. Can you describe it — is it a white dusty coating?"
+
+### 9.6 Equipment & Shopping Lists with Affiliate Links
+
+**Priority:** Medium — revenue opportunity + user convenience
+
+When Sage tells you to do a task, it checks if you have what you need and provides a shopping list:
+
+- "Before you start, you'll need: multipurpose compost (about £4 from Wilko), small 9cm pots (pack of 10 for £2), and your seeds"
+- If they say "no, I need pots" → "Here's exactly the ones I'd recommend" + link
+
+**Revenue model:** Affiliate partnerships with UK garden retailers (Wilko, B&Q, Crocus, Thompson & Morgan, Suttons Seeds). Sage recommends specific products with affiliate links. User gets convenience (one-tap purchase), retailer gets qualified traffic, Sage gets commission.
+
+**Ethical guardrail:** Sage only recommends products the user actually needs for their current task. Never upsells. Never recommends expensive options when cheap ones work fine. The recommendation must be genuinely the best option for the user, not the highest commission item.
+
+**Potential partners:**
+- Wilko — budget pots, compost, basic tools
+- B&Q — larger items, grow bags, raised beds
+- Thompson & Morgan / Suttons — seeds, plug plants
+- Crocus — premium plants, fruit bushes
+- Amazon — convenience fallback
+
+### 9.7 Cost Tracking (Premium Feature)
+
+**Priority:** Low-Medium — nice retention metric, premium tier feature
+
+Track what users spend (seeds, compost, pots, tools, feed) vs the retail value of what they harvest:
+
+- "You've spent £22 so far this season and harvested £68 worth of veg. That's a 3x return"
+- End of season: "Your garden saved you £120 vs buying from the supermarket. And it tasted better"
+
+**Psychology:** Proves the subscription pays for itself. Concrete ROI that users can share ("I saved £120 growing my own food"). Combines loss aversion (you'd lose these savings) with identity reinforcement (you're the kind of person who grows their own).
+
+**Premium tier justification:** This is a "nice to have" not a "need to have" — perfect for premium. Free users get the coaching, premium users get the analytics.
+
+### 9.8 Companion Planting Layout Suggestions
+
+**Priority:** Low — builds on companion planting intelligence
+
+When a user has multiple plants, Sage suggests where to put them relative to each other:
+
+- "Put your basil next to the tomatoes — they help each other. Keep the beans at the other end, away from the onions"
+- For raised beds or allotments: simple text-based layout suggestions
+
+### 9.9 Crop Rotation (Second Season+)
+
+**Priority:** Low — only relevant for returning users with dedicated beds
+
+"You grew tomatoes in that spot last year — don't plant them there again. Tomatoes, potatoes, and peppers are all in the same family. Put your beans there instead — they'll fix nitrogen in the soil for next year's heavy feeders."
+
+### 9.10 Seed Saving Guide (Experienced Users)
+
+**Priority:** Low — engagement feature for experienced growers
+
+When a user reaches harvest stage: "If you want to save seeds from your best tomato for next year, here's how..." Deepens the investment and creates a multi-year growing narrative.
+
+---
+
+## 10. Revenue Model
+
+### Free Tier
+- Full coaching via WhatsApp/Slack
+- Milestone tracking and proactive check-ins
+- Weather-fused growing advice
+- Growing plan (up to 5 active plants)
+- Equipment checks and shopping lists
+
+### Premium Tier (£3.99/month or £29.99/year)
+- Unlimited plants
+- Cost tracking and ROI analytics
+- Second season intelligence (year-over-year learning)
+- Photo diagnosis
+- Priority support
+
+### Affiliate Revenue
+- Product recommendations with affiliate links
+- Only when the user genuinely needs something
+- Commission from UK garden retailers
+- Estimated 5-8% commission on garden supplies
+- Average basket £15-25 per recommendation
+
+### Revenue Projections (Conservative)
+| Metric | Year 1 | Year 2 |
+|---|---|---|
+| Free users | 5,000 | 25,000 |
+| Premium conversion | 8% (400) | 10% (2,500) |
+| Annual premium revenue | £12,000 | £75,000 |
+| Affiliate revenue per user/year | £5 | £8 |
+| Annual affiliate revenue | £25,000 | £200,000 |
+| **Total revenue** | **£37,000** | **£275,000** |
+
+---
+
 ## References
 
 - Fogg, BJ (2019). *Tiny Habits: The Small Changes That Change Everything*. Houghton Mifflin Harcourt. [behaviormodel.org](https://www.behaviormodel.org/)
