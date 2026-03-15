@@ -21,6 +21,7 @@ from pathlib import Path
 from app.eval.personas import PERSONAS, Persona
 from app.eval.runner import EvalRunner
 from app.eval.evaluator import EvalResult
+from app.eval.event_log import EventLog
 
 logger = logging.getLogger(__name__)
 
@@ -153,21 +154,53 @@ async def _run_eval(
     turns_override: int | None,
     repeat: int,
     run_judge: bool,
+    output_dir: Path,
+    event_log: EventLog | None = None,
 ) -> list[EvalResult]:
-    """Run evaluations for all selected personas."""
-    runner = EvalRunner(run_judge=run_judge)
+    """Run evaluations for all selected personas, saving after each conversation."""
+    runner = EvalRunner(run_judge=run_judge, event_log=event_log)
     all_results: list[EvalResult] = []
+    completed = 0
+    total = len(personas) * repeat
+
+    if event_log:
+        event_log.run_started(
+            total_conversations=total,
+            personas=[p.slug for p in personas],
+            run_judge=run_judge,
+        )
 
     for persona in personas:
         if turns_override is not None:
             persona.turns = turns_override
 
         for i in range(repeat):
+            completed += 1
             suffix = f" (run {i + 1}/{repeat})" if repeat > 1 else ""
-            print(f"\nRunning {persona.slug} ({persona.turns} turns){suffix}...")
+            print(f"\n[{completed}/{total}] Running {persona.slug} ({persona.turns} turns){suffix}...")
 
-            result = await runner.run_persona(persona)
+            if event_log:
+                event_log.conversation_started(
+                    persona=persona.slug,
+                    run_number=i + 1,
+                    total_runs=repeat,
+                    conversation_index=completed,
+                )
+
+            result = await runner.run_persona(persona, conversation_index=completed)
             all_results.append(result)
+
+            if event_log:
+                event_log.conversation_completed(
+                    persona=persona.slug,
+                    conversation_index=completed,
+                    rule_results=result.rule_results,
+                    judge_scores=result.judge_scores,
+                    judge_average=result.judge_average,
+                    rule_passed=result.rule_passed,
+                    turns_completed=result.turns_completed,
+                    errors=result.errors,
+                )
 
             # Print transcript
             print()
@@ -184,6 +217,23 @@ async def _run_eval(
 
             if result.errors:
                 print(f"\n  Errors: {result.errors}")
+
+            # Save incrementally after each conversation
+            _save_results(all_results, output_dir.name, output_dir)
+            print(f"  [Saved {completed}/{total} to {output_dir.name}/]")
+
+    # Emit run_completed event
+    if event_log:
+        passed_count = sum(1 for r in all_results if r.rule_passed)
+        failed_count = total - passed_count
+        judge_averages = [r.judge_average for r in all_results if r.judge_average is not None]
+        avg_judge = sum(judge_averages) / len(judge_averages) if judge_averages else None
+        event_log.run_completed(
+            total=total,
+            passed=passed_count,
+            failed=failed_count,
+            avg_judge_score=avg_judge,
+        )
 
     return all_results
 
@@ -245,14 +295,23 @@ def main() -> None:
     print(f"Personas: {[p.slug for p in personas]}")
     print(f"Judge: {'enabled' if not args.no_judge else 'disabled'}")
 
-    # Run evaluations
+    # Create output dir upfront so results save incrementally
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = RESULTS_DIR / timestamp
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Results saving to: {output_dir}")
+
+    # Create event log for live dashboard streaming
+    event_log = EventLog()
+
+    # Run evaluations (saves after each conversation)
     results = asyncio.run(
-        _run_eval(personas, args.turns, args.repeat, not args.no_judge)
+        _run_eval(personas, args.turns, args.repeat, not args.no_judge, output_dir, event_log)
     )
 
-    # Print summary
+    # Print final summary
     print("\n" + "=" * 50)
-    print("  RESULTS")
+    print("  FINAL RESULTS")
     print("=" * 50)
     for r in results:
         rules_passed = sum(
@@ -264,11 +323,9 @@ def main() -> None:
         judge_str = f"Judge: {r.judge_average:.1f}/5" if r.judge_average else "Judge: n/a"
         print(f"  [{status}] {r.persona_name:<25} Rules: {rules_passed}/5  {judge_str}")
 
-    # Save results
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = RESULTS_DIR / timestamp
+    # Final save
     _save_results(results, timestamp, output_dir)
-    print(f"\nResults saved to: {output_dir}")
+    print(f"\nAll results saved to: {output_dir}")
 
 
 if __name__ == "__main__":

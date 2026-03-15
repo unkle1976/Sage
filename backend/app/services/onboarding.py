@@ -16,6 +16,52 @@ from app.services.soil import SoilService
 
 logger = logging.getLogger(__name__)
 
+# Map colloquial / plural plant names to PlantSpec common_name values.
+# A value of None means the term is a category (e.g. "herbs") — skip it,
+# individual herb species will be matched by their own names.
+COLLOQUIAL_ALIASES: dict[str, str | None] = {
+    "chillies": "chilli pepper",
+    "chilli": "chilli pepper",
+    "chilis": "chilli pepper",
+    "peppers": "pepper",
+    "toms": "tomato",
+    "tomatoes": "tomato",
+    "spuds": "potato",
+    "potatoes": "potato",
+    "courgettes": "courgette",
+    "runner beans": "runner bean",
+    "broad beans": "broad bean",
+    "french beans": "french bean",
+    "spring onions": "spring onion",
+    "herbs": None,
+    "salad": "lettuce",
+    "lettuce": "lettuce",
+    "strawberries": "strawberry",
+    "raspberries": "raspberry",
+    "blueberries": "blueberry",
+    "carrots": "carrot",
+    "beetroot": "beetroot",
+    "radishes": "radish",
+    "peas": "pea",
+    "sweetcorn": "sweetcorn",
+}
+
+# Keywords that suggest the message is about gardening / growing
+_GARDENING_KEYWORDS = {
+    "grow", "growing", "plant", "plants", "planting", "garden", "gardening",
+    "veg", "vegetable", "vegetables", "fruit", "fruits", "seed", "seeds",
+    "sow", "sowing", "harvest", "allotment", "plot", "raised bed",
+    "compost", "soil", "pot", "pots", "container", "greenhouse",
+    "tomato", "tomatoes", "carrot", "carrots", "potato", "potatoes",
+    "herb", "herbs", "basil", "mint", "parsley", "chilli", "chillies",
+    "lettuce", "salad", "strawberry", "strawberries", "raspberry",
+    "raspberries", "blueberry", "blueberries", "courgette", "cucumber",
+    "bean", "beans", "pea", "peas", "onion", "garlic", "leek",
+    "beetroot", "radish", "sweetcorn", "flower", "flowers", "weed",
+    "prune", "pruning", "mulch", "fertiliser", "fertilizer",
+    "sunlight", "watering", "shed", "lawn", "hedge",
+}
+
 
 class OnboardingService:
     """Value-first onboarding: 3 messages to get growing.
@@ -47,6 +93,13 @@ class OnboardingService:
     async def process_step(self, user: User, message: str, session: AsyncSession) -> str:
         """Process user input for current onboarding step."""
         step = user.onboarding_step or "awaiting_first_plant"
+
+        # Friendly redirect if the message is clearly not about gardening
+        if step in ("awaiting_first_plant", "awaiting_postcode") and self._is_off_topic(message):
+            return (
+                "Ha, I'm just a gardening coach! But if you fancy growing "
+                "something, I'm your person \U0001f331 What sounds good?"
+            )
 
         if step == "awaiting_first_plant":
             return await self._handle_first_plant(user, message, session)
@@ -192,6 +245,21 @@ class OnboardingService:
 
         text_lower = text.lower()
 
+        # Resolve colloquial aliases — replace known slang/plurals with
+        # canonical PlantSpec names so the regex matching can find them.
+        # Process multi-word aliases first (longest-first) to avoid partial
+        # replacements like "broad" matching before "broad beans".
+        sorted_aliases = sorted(COLLOQUIAL_ALIASES.keys(), key=len, reverse=True)
+        for alias in sorted_aliases:
+            pattern = r'\b' + re.escape(alias) + r'\b'
+            if re.search(pattern, text_lower):
+                canonical = COLLOQUIAL_ALIASES[alias]
+                if canonical is None:
+                    # Category term (e.g. "herbs") — just remove it so it
+                    # doesn't interfere, individual species matched separately
+                    continue
+                text_lower = re.sub(pattern, canonical, text_lower)
+
         # Load all plant spec names
         stmt = select(PlantSpec)
         result = await session.execute(stmt)
@@ -252,6 +320,38 @@ class OnboardingService:
 
         # Fallback: return the whole message (let the postcode service handle it)
         return text
+
+    @staticmethod
+    def _is_off_topic(text: str) -> bool:
+        """Return True if the message is clearly not about gardening.
+
+        Keeps it lightweight — just keyword presence checks, no API call.
+        If in doubt (short messages, ambiguous), returns False so normal
+        onboarding proceeds.
+        """
+        text_lower = text.lower()
+
+        # Very short messages (1-3 chars) are likely postcodes or typos — not off-topic
+        stripped = text.strip()
+        if len(stripped) <= 3:
+            return False
+
+        # If it looks like a UK postcode, not off-topic
+        if re.search(r'\b[A-Za-z]{1,2}\d[A-Za-z\d]?\s*(\d[A-Za-z]{2})?\b', stripped):
+            return False
+
+        # Check for any gardening-related keyword
+        for keyword in _GARDENING_KEYWORDS:
+            if re.search(r'\b' + re.escape(keyword) + r'\b', text_lower):
+                return False
+
+        # Check against colloquial aliases too
+        for alias in COLLOQUIAL_ALIASES:
+            if re.search(r'\b' + re.escape(alias) + r'\b', text_lower):
+                return False
+
+        # Nothing gardening-related found — likely off-topic
+        return True
 
     @staticmethod
     def _parse_plant_names(text: str) -> list[str]:

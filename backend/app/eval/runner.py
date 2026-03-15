@@ -31,6 +31,7 @@ from app.services.soil import SoilService
 from app.services.weather import WeatherService
 from app.eval.personas import Persona
 from app.eval.evaluator import EvalResult, run_rule_checks, judge_conversation
+from app.eval.event_log import EventLog
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +98,9 @@ async def _load_history(user_id, session) -> list[dict]:
 class EvalRunner:
     """Runs synthetic conversations through the real Sage system."""
 
-    def __init__(self, run_judge: bool = True):
+    def __init__(self, run_judge: bool = True, event_log: EventLog | None = None):
         self._run_judge = run_judge
+        self._event_log = event_log
         from app.core.config import settings
         self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         self._weather_service = WeatherService()
@@ -108,7 +110,7 @@ class EvalRunner:
             soil_service=self._soil_service,
         )
 
-    async def run_persona(self, persona: Persona) -> EvalResult:
+    async def run_persona(self, persona: Persona, conversation_index: int = 0) -> EvalResult:
         """Run a single persona conversation end-to-end."""
         result = EvalResult(
             persona_name=persona.slug,
@@ -134,10 +136,14 @@ class EvalRunner:
                 result.transcript.append({
                     "role": "sage", "content": welcome, "turn": 0,
                 })
+                if self._event_log:
+                    self._event_log.turn("sage", welcome, 0, persona.slug, conversation_index)
                 logger.info("  Turn 0: [SAGE] %s", welcome[:80])
 
                 # 3. Send persona's first_message through onboarding
                 turn = 1
+                if self._event_log:
+                    self._event_log.api_call("sage_response", persona.slug, conversation_index)
                 sage_response = await self._process_message_onboarding(
                     user, persona.first_message, session
                 )
@@ -157,6 +163,9 @@ class EvalRunner:
                 result.transcript.append({
                     "role": "sage", "content": sage_response, "turn": turn,
                 })
+                if self._event_log:
+                    self._event_log.turn("user", persona.first_message, turn, persona.slug, conversation_index)
+                    self._event_log.turn("sage", sage_response, turn, persona.slug, conversation_index)
                 logger.info("  Turn %d: [USER] %s", turn, persona.first_message[:80])
                 logger.info("  Turn %d: [SAGE] %s", turn, sage_response[:80])
                 result.turns_completed = turn
@@ -171,6 +180,8 @@ class EvalRunner:
 
                 for turn in range(2, persona.turns + 1):
                     # Generate synthetic user's next message
+                    if self._event_log:
+                        self._event_log.api_call("synthetic_user", persona.slug, conversation_index)
                     user_message = await self._generate_synthetic_message(
                         persona, synth_history
                     )
@@ -183,6 +194,8 @@ class EvalRunner:
                     await session.refresh(user)
 
                     # Route through onboarding or orchestrator
+                    if self._event_log:
+                        self._event_log.api_call("sage_response", persona.slug, conversation_index)
                     if not user.onboarding_complete:
                         sage_response = await self._process_message_onboarding(
                             user, user_message, session
@@ -211,6 +224,9 @@ class EvalRunner:
                     result.transcript.append({
                         "role": "sage", "content": sage_response, "turn": turn,
                     })
+                    if self._event_log:
+                        self._event_log.turn("user", user_message, turn, persona.slug, conversation_index)
+                        self._event_log.turn("sage", sage_response, turn, persona.slug, conversation_index)
                     logger.info("  Turn %d: [USER] %s", turn, user_message[:80])
                     logger.info("  Turn %d: [SAGE] %s", turn, sage_response[:80])
                     result.turns_completed = turn
@@ -234,6 +250,8 @@ class EvalRunner:
 
                 # 6. Run judge evaluation
                 if self._run_judge:
+                    if self._event_log:
+                        self._event_log.api_call("judge", persona.slug, conversation_index)
                     result.judge_scores = await judge_conversation(
                         result.transcript, persona, self._client
                     )
