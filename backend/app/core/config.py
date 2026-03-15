@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str = ""
     whatsapp_app_secret: str = ""
 
+    # Slack
+    slack_bot_token: str = ""
+    slack_app_token: str = ""
+
     # App
     app_name: str = "Sage"
     debug: bool = False
