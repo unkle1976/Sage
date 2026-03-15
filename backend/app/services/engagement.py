@@ -32,6 +32,22 @@ class EngagementService:
         return random.random() < chance
 
     @staticmethod
+    def get_frequency_for_unanswered(count: int) -> str:
+        if count >= 4:
+            return "minimal"
+        if count >= 3:
+            return "reduced"
+        return "normal"
+
+    @staticmethod
+    def should_nudge(count: int) -> bool:
+        return count == 2
+
+    @staticmethod
+    def min_days_between(frequency: str) -> int:
+        return {"normal": 3, "reduced": 7, "minimal": 14}.get(frequency, 3)
+
+    @staticmethod
     def is_quiet_hours(current_time: time_type, quiet_start: time_type | None, quiet_end: time_type | None) -> bool:
         if quiet_start is None or quiet_end is None:
             return False
