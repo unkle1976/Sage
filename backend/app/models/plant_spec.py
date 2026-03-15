@@ -29,3 +29,5 @@ class PlantSpec(Base):
     companion_plants: Mapped[dict | None] = mapped_column(JSONB)
     antagonist_plants: Mapped[dict | None] = mapped_column(JSONB)
     notes: Mapped[str | None] = mapped_column(Text)
+    growth_milestones: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    interesting_facts: Mapped[list | None] = mapped_column(JSONB, nullable=True)

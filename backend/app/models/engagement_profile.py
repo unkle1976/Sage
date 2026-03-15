@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, time as time_type
 
-from sqlalchemy import DateTime, ForeignKey, String, Time
+from sqlalchemy import DateTime, ForeignKey, SmallInteger, String, Time
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -23,3 +23,5 @@ class EngagementProfile(Base):
     quiet_hours_end: Mapped[time_type | None] = mapped_column(Time)
     last_sage_initiated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_user_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    unanswered_count: Mapped[int] = mapped_column(SmallInteger, server_default="0")
+    current_frequency: Mapped[str] = mapped_column(String(20), server_default="normal")
