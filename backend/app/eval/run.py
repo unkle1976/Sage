@@ -171,23 +171,26 @@ async def _run_eval(
         )
 
     for persona in personas:
-        if turns_override is not None:
-            persona.turns = turns_override
-
         for i in range(repeat):
             completed += 1
+            # Randomise persona for each run (different plants, postcodes, openers)
+            run_persona = persona.randomise()
+            if turns_override is not None:
+                run_persona.turns = turns_override
             suffix = f" (run {i + 1}/{repeat})" if repeat > 1 else ""
-            print(f"\n[{completed}/{total}] Running {persona.slug} ({persona.turns} turns){suffix}...")
+            print(f"\n[{completed}/{total}] Running {run_persona.slug} as {run_persona.name} ({run_persona.turns} turns){suffix}...")
+            print(f"  Plants: {run_persona.expected_plants}, Postcode: {run_persona.postcode}")
+            print(f"  Opener: {run_persona.first_message}")
 
             if event_log:
                 event_log.conversation_started(
-                    persona=persona.slug,
+                    persona=run_persona.slug,
                     run_number=i + 1,
                     total_runs=repeat,
                     conversation_index=completed,
                 )
 
-            result = await runner.run_persona(persona, conversation_index=completed)
+            result = await runner.run_persona(run_persona, conversation_index=completed)
             all_results.append(result)
 
             if event_log:
