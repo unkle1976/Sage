@@ -12,6 +12,7 @@ from app.models.growing_calendar import GrowingCalendar
 from app.models.growing_season import GrowingSeason
 from app.models.weather_log import WeatherLog
 from app.models.engagement_profile import EngagementProfile
+from app.models.growing_plan_item import GrowingPlanItem
 
 __all__ = [
     "Base",
@@ -28,4 +29,5 @@ __all__ = [
     "GrowingSeason",
     "WeatherLog",
     "EngagementProfile",
+    "GrowingPlanItem",
 ]
