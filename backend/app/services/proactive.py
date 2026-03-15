@@ -42,6 +42,19 @@ class ProactiveMessageBuilder:
         return "\n".join(lines)
 
     @staticmethod
+    def build_milestone_context(milestones: list[dict]) -> str:
+        if not milestones:
+            return ""
+        lines = ["MILESTONE CHECK-INS DUE:"]
+        for m in milestones:
+            name = m["plant_name"]
+            if m.get("variety"):
+                name += f" ({m['variety']})"
+            status = "DELAYED by weather" if m["delayed"] else f"Day {m['days_since_planting']}"
+            lines.append(f"- {name}: {m['stage']} ({status}) — {m['check_in']}")
+        return "\n".join(lines)
+
+    @staticmethod
     def build_system_instruction(trigger_context: str, plant_summary: str, user_name: str, experience_level: str) -> str:
         return f"""You are Sage, a friendly gardening mate. Generate a proactive WhatsApp message.
 

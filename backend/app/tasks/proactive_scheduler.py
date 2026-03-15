@@ -17,6 +17,7 @@ from app.models.garden import Garden
 from app.models.plant import Plant
 from app.models.user import User
 from app.services.engagement import EngagementService
+from app.services.milestone_checker import MilestoneChecker
 from app.services.proactive import ProactiveMessageBuilder
 from app.services.queue import MessageQueue
 from app.services.weather import WeatherService
@@ -77,11 +78,13 @@ async def _process_user(user, session, weather, queue, client, now):
     )
     days_since = (now - last_contact).days if last_contact else 999
 
-    triggers = {"weather_alerts": [], "care_due": [], "growth_updates": []}
+    triggers = {"weather_alerts": [], "care_due": [], "growth_updates": [], "milestones": []}
 
+    weather_data = None
     if user.latitude and user.longitude:
         try:
             frost = await weather.check_frost_risk(float(user.latitude), float(user.longitude))
+            weather_data = frost
             if frost.get("frost_risk"):
                 triggers["weather_alerts"].append({
                     "type": "frost",
@@ -90,8 +93,25 @@ async def _process_user(user, session, weather, queue, client, now):
         except Exception:
             logger.warning("Weather check failed for user %s", user.id)
 
+    # --- Milestone checking ---
+    garden_result_early = await session.execute(
+        select(Garden).where(Garden.user_id == user.id, Garden.is_primary.is_(True))
+    )
+    garden_early = garden_result_early.scalar_one_or_none()
+
+    if garden_early:
+        plants_result_early = await session.execute(
+            select(Plant).where(Plant.garden_id == garden_early.id, Plant.is_active.is_(True))
+        )
+        active_plants = plants_result_early.scalars().all()
+
+        checker = MilestoneChecker()
+        due_milestones = checker.get_due_milestones(active_plants, now.date(), weather=weather_data)
+        if due_milestones:
+            triggers["milestones"] = due_milestones
+
     has_urgent = bool(triggers["weather_alerts"])
-    has_timely = bool(triggers["care_due"] or triggers["growth_updates"])
+    has_timely = bool(triggers["care_due"] or triggers["growth_updates"] or triggers["milestones"])
     should_sporadic = EngagementService.should_send_sporadic(days_since, now.month)
 
     if not has_urgent and not has_timely and not should_sporadic:
@@ -100,17 +120,23 @@ async def _process_user(user, session, weather, queue, client, now):
     if profile.notification_level == "alerts_only" and not has_urgent:
         return
 
-    garden_result = await session.execute(
-        select(Garden).where(Garden.user_id == user.id, Garden.is_primary.is_(True))
-    )
-    garden = garden_result.scalar_one_or_none()
+    # Re-use garden/plants if already fetched for milestones, otherwise fetch now
+    garden = garden_early
+    if garden is None:
+        garden_result = await session.execute(
+            select(Garden).where(Garden.user_id == user.id, Garden.is_primary.is_(True))
+        )
+        garden = garden_result.scalar_one_or_none()
 
     plants_data = []
     if garden:
-        plants_result = await session.execute(
-            select(Plant).where(Plant.garden_id == garden.id, Plant.is_active.is_(True))
-        )
-        plants = plants_result.scalars().all()
+        if garden_early:
+            plants = active_plants
+        else:
+            plants_result = await session.execute(
+                select(Plant).where(Plant.garden_id == garden.id, Plant.is_active.is_(True))
+            )
+            plants = plants_result.scalars().all()
         plants_data = [
             {"variety": p.variety, "growth_stage": p.growth_stage, "planting_date": str(p.planting_date)}
             for p in plants
@@ -118,6 +144,22 @@ async def _process_user(user, session, weather, queue, client, now):
 
     plant_summary = ProactiveMessageBuilder.build_plant_summary(plants_data)
     trigger_context = ProactiveMessageBuilder.build_trigger_context(triggers)
+    milestone_context = ProactiveMessageBuilder.build_milestone_context(
+        [
+            {
+                "plant_name": m["plant_name"],
+                "variety": m["variety"],
+                "stage": m["stage"],
+                "check_in": m["check_in"],
+                "delayed": m["delayed"],
+                "days_since_planting": m["days_since_planting"],
+            }
+            for m in triggers.get("milestones", [])
+        ]
+    )
+    if milestone_context:
+        trigger_context = trigger_context + "\n\n" + milestone_context if trigger_context else milestone_context
+
     system_instruction = ProactiveMessageBuilder.build_system_instruction(
         trigger_context=trigger_context,
         plant_summary=plant_summary,
