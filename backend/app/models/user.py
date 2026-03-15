@@ -14,6 +14,7 @@ class User(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     whatsapp_phone: Mapped[str] = mapped_column(String(20), unique=True, index=True)
+    slack_user_id: Mapped[str | None] = mapped_column(String(30), unique=True, index=True)
     display_name: Mapped[str | None] = mapped_column(String(100))
     postcode_outward: Mapped[str | None] = mapped_column(String(4))
     latitude: Mapped[Decimal | None] = mapped_column(Numeric(8, 6))

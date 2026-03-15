@@ -17,4 +17,9 @@ class ConversationMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
     whatsapp_message_id: Mapped[str | None] = mapped_column(String(100))
+    channel: Mapped[str] = mapped_column(String(20), server_default="cli")  # cli, slack, whatsapp
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("channel", "cli")
+        super().__init__(**kwargs)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
