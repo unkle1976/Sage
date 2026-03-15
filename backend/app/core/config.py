@@ -1,9 +1,13 @@
 from pathlib import Path
 
+from dotenv import dotenv_values
 from pydantic_settings import BaseSettings
 
 # Resolve .env relative to the backend/ directory (two levels up from this file)
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
+
+# Load .env manually — pydantic-settings struggles with spaces in paths
+_env_vals = dotenv_values(str(_ENV_FILE)) if _ENV_FILE.exists() else {}
 
 
 class Settings(BaseSettings):
@@ -34,4 +38,4 @@ class Settings(BaseSettings):
     model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8"}
 
 
-settings = Settings()
+settings = Settings(**{k.lower(): v for k, v in _env_vals.items() if v})

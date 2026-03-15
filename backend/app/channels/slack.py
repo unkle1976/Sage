@@ -76,7 +76,10 @@ async def _load_context(user: User, session) -> dict:
 
 
 async def _load_history(user_id, session) -> list[dict]:
-    """Load recent conversation history formatted for Claude API."""
+    """Load recent conversation history formatted for Claude API.
+
+    Merges consecutive same-role messages to avoid Claude API validation errors.
+    """
     stmt = (
         select(ConversationMessage)
         .where(ConversationMessage.user_id == user_id)
@@ -86,7 +89,23 @@ async def _load_history(user_id, session) -> list[dict]:
     result = await session.execute(stmt)
     messages = result.scalars().all()
     messages.reverse()
-    return [{"role": m.role, "content": m.content} for m in messages]
+
+    # Filter out messages with empty/whitespace-only content (prevents Claude API 400)
+    valid = [m for m in messages if m.content and m.content.strip()]
+
+    # Merge consecutive same-role messages (Claude requires alternating roles)
+    merged: list[dict] = []
+    for m in valid:
+        if merged and merged[-1]["role"] == m.role:
+            merged[-1]["content"] += "\n\n" + m.content
+        else:
+            merged.append({"role": m.role, "content": m.content})
+
+    # Claude API requires first message to be role "user" — trim leading assistant messages
+    while merged and merged[0]["role"] != "user":
+        merged.pop(0)
+
+    return merged
 
 
 def create_slack_app() -> AsyncApp:
@@ -114,47 +133,59 @@ def create_slack_app() -> AsyncApp:
         if not user_text:
             return
 
-        async with async_session() as session:
-            user, is_new = await _find_or_create_slack_user(slack_user_id, session)
+        try:
+            async with async_session() as session:
+                user, is_new = await _find_or_create_slack_user(slack_user_id, session)
 
-            # Welcome new users
-            if is_new:
-                welcome = await onboarding.get_welcome_message()
+                # Welcome new users — store their triggering message too
+                if is_new:
+                    welcome = await onboarding.get_welcome_message()
+                    session.add(ConversationMessage(
+                        user_id=user.id, role="user", content=user_text, channel="slack",
+                    ))
+                    session.add(ConversationMessage(
+                        user_id=user.id, role="assistant", content=welcome, channel="slack",
+                    ))
+                    await session.commit()
+                    await say(welcome)
+                    return
+
+                # Refresh user state
+                await session.refresh(user)
+
+                # Route: onboarding or orchestrator
+                if not user.onboarding_complete:
+                    response_text = await onboarding.process_step(user, user_text, session)
+                else:
+                    tool_handlers = build_tool_handlers(
+                        user=user,
+                        session=session,
+                        weather_service=weather_service,
+                        soil_service=soil_service,
+                    )
+                    orchestrator = SageOrchestrator(client=client, tool_handlers=tool_handlers)
+                    user_context = await _load_context(user, session)
+                    history = await _load_history(user.id, session)
+                    response_text = await orchestrator.chat(user_text, user_context, history)
+
+                # Guard against empty responses (tool-only turns with no text)
+                if not response_text or not response_text.strip():
+                    response_text = "Got it! 👍"
+
+                # Persist both messages
                 session.add(ConversationMessage(
-                    user_id=user.id, role="assistant", content=welcome, channel="slack",
+                    user_id=user.id, role="user", content=user_text, channel="slack",
+                ))
+                session.add(ConversationMessage(
+                    user_id=user.id, role="assistant", content=response_text, channel="slack",
                 ))
                 await session.commit()
-                await say(welcome)
-                return
 
-            # Refresh user state
-            await session.refresh(user)
+                await say(response_text)
 
-            # Route: onboarding or orchestrator
-            if not user.onboarding_complete:
-                response_text = await onboarding.process_step(user, user_text, session)
-            else:
-                tool_handlers = build_tool_handlers(
-                    user=user,
-                    session=session,
-                    weather_service=weather_service,
-                    soil_service=soil_service,
-                )
-                orchestrator = SageOrchestrator(client=client, tool_handlers=tool_handlers)
-                user_context = await _load_context(user, session)
-                history = await _load_history(user.id, session)
-                response_text = await orchestrator.chat(user_text, user_context, history)
-
-            # Persist both messages
-            session.add(ConversationMessage(
-                user_id=user.id, role="user", content=user_text, channel="slack",
-            ))
-            session.add(ConversationMessage(
-                user_id=user.id, role="assistant", content=response_text, channel="slack",
-            ))
-            await session.commit()
-
-            await say(response_text)
+        except Exception:
+            logger.exception("Error handling Slack message")
+            await say("Sorry, I had a bit of a wobble there. Try again? 🌱")
 
     return app
 

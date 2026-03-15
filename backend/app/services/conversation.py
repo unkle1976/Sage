@@ -62,10 +62,22 @@ class ConversationService:
         messages = result.scalars().all()
 
         # Reverse to chronological order (query fetched newest first)
-        return [
-            {"role": m.role, "content": m.content}
-            for m in reversed(messages)
-        ]
+        # Filter out empty/whitespace-only content (prevents Claude API 400)
+        valid = [m for m in reversed(messages) if m.content and m.content.strip()]
+
+        # Merge consecutive same-role messages (Claude requires alternating roles)
+        merged: list[dict] = []
+        for m in valid:
+            if merged and merged[-1]["role"] == m.role:
+                merged[-1]["content"] += "\n\n" + m.content
+            else:
+                merged.append({"role": m.role, "content": m.content})
+
+        # Claude API requires first message to be role "user"
+        while merged and merged[0]["role"] != "user":
+            merged.pop(0)
+
+        return merged
 
     async def load_user_context(self, user_id: uuid.UUID) -> dict:
         """Load user profile, garden, plants, and recent context events.
