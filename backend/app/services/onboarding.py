@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import date, datetime
 
@@ -13,6 +14,8 @@ from app.models.user import User
 from app.services.postcode import PostcodeService
 from app.services.soil import SoilService
 
+logger = logging.getLogger(__name__)
+
 
 class OnboardingService:
     """Value-first onboarding: 3 messages to get growing.
@@ -20,7 +23,8 @@ class OnboardingService:
     Flow:
       1. Sage asks what they want to grow (the exciting bit)
       2. User says a plant → Sage gives seasonal value + asks postcode
-      3. User gives postcode → Sage gives location-specific first task → DONE
+      3. User gives postcode → Sage confirms location, references their plant,
+         and kicks straight into coaching (seeds? equipment? first task)
     """
 
     STEPS = [
@@ -53,12 +57,9 @@ class OnboardingService:
 
     async def _handle_first_plant(self, user: User, message: str, session: AsyncSession) -> str:
         """User told us what they want to grow. Store it, give value, ask postcode."""
-        plant_names = self._parse_plant_names(message)
-        plant_text = ", ".join(plant_names) if plant_names else message.strip()
-
-        # Store plant intent in preferences for later
+        # Store raw message — we'll extract plant names later when we have PlantSpec access
         user.preferences = user.preferences or {}
-        user.preferences["first_plant"] = plant_text
+        user.preferences["first_plant_raw"] = message.strip()
 
         user.onboarding_step = "awaiting_postcode"
         await session.commit()
@@ -110,10 +111,28 @@ class OnboardingService:
         )
         session.add(garden)
 
-        # Match plants from user's first message
-        plant_text = (user.preferences or {}).get("first_plant", "")
-        plant_names = self._parse_plant_names(plant_text) if plant_text else []
-        await self._create_plants(plant_names, user, garden, session)
+        # Match plants from user's first message using fuzzy matching
+        raw_text = (user.preferences or {}).get("first_plant_raw", "")
+        matched_specs = await self._match_plants_from_text(raw_text, session)
+        matched_names = []
+        for spec in matched_specs:
+            plant = Plant(
+                garden_id=garden.id,
+                plant_spec_id=spec.id,
+                variety=spec.common_name,
+            )
+            session.add(plant)
+            matched_names.append(spec.common_name.lower())
+
+        # Store clean matched names in preferences
+        user.preferences = user.preferences or {}
+        user.preferences["first_plants"] = matched_names
+
+        logger.info(
+            "Onboarding plant match: raw=%r matched=%r",
+            raw_text,
+            matched_names,
+        )
 
         # Create engagement profile
         profile = EngagementProfile(
@@ -138,51 +157,76 @@ class OnboardingService:
         user.onboarding_step = "complete"
         await session.commit()
 
-        # Build response with location-specific first task
+        # Build response — location confirmation then straight into coaching
         location = result.get("admin_district") or result.get("region") or "your area"
         soil_desc = user.soil_type if user.soil_type != "unknown" else "local"
 
-        return (
-            f"{location} \u2014 nice! Your soil's {soil_desc} round there. "
-            f"Right, I'm all set up for you. I'll send you a message whenever "
-            f"your plants need attention \u2014 watering, planting out, weather "
-            f"warnings, that sort of thing. You don't need to remember, I'll "
-            f"keep track for you \U0001f331"
-        )
+        if matched_names:
+            plant_list = " and ".join(matched_names)
+            return (
+                f"{location} \u2014 nice! Your soil's {soil_desc} round there. "
+                f"Right, let's get your {plant_list} going. "
+                f"Have you got seeds already or do you need to grab some?"
+            )
+        else:
+            # Couldn't match to a known plant — ask Claude to take over
+            return (
+                f"{location} \u2014 nice! Your soil's {soil_desc} round there. "
+                f"I'm all set up for you. So tell me more about what you'd like to grow "
+                f"and I'll get you started \U0001f331"
+            )
 
-    async def _create_plants(self, plant_names, user, garden, session):
-        """Match plant names to PlantSpec and create Plant records."""
-        if not plant_names:
-            return
+    async def _match_plants_from_text(
+        self, text: str, session: AsyncSession
+    ) -> list[PlantSpec]:
+        """Fuzzy-match plant names from free text against PlantSpec database.
 
-        search_variants = {}
-        for name in plant_names:
-            lower = name.lower()
-            search_variants[lower] = name
-            if lower.endswith("oes"):
-                search_variants[lower[:-2]] = name
-            elif lower.endswith("ies"):
-                search_variants[lower[:-3] + "y"] = name
-            elif lower.endswith("s") and not lower.endswith("ss"):
-                search_variants[lower[:-1]] = name
+        Instead of parsing the user's message into plant names (which fails for
+        natural language like "I'm thinking carrots!"), we load all PlantSpec
+        common names and check which ones appear as substrings in the message.
+        """
+        if not text:
+            return []
 
-        conditions = [func.lower(PlantSpec.common_name) == v for v in search_variants]
-        if conditions:
-            stmt = select(PlantSpec).where(or_(*conditions))
-            result = await session.execute(stmt)
-            matched_specs = result.scalars().all()
+        text_lower = text.lower()
 
-            for spec in matched_specs:
-                plant = Plant(
-                    garden_id=garden.id,
-                    plant_spec_id=spec.id,
-                    variety=spec.common_name,
-                )
-                session.add(plant)
+        # Load all plant spec names
+        stmt = select(PlantSpec)
+        result = await session.execute(stmt)
+        all_specs = result.scalars().all()
+
+        matched = []
+        for spec in all_specs:
+            name = spec.common_name.lower()
+            # Check if plant name appears in user's message (word boundary aware)
+            # e.g. "carrot" matches in "I'm thinking carrots!" but "car" won't match "carrots"
+            # Also check common plural forms
+            variants = [name]
+            if name.endswith("o"):
+                variants.append(name + "es")  # tomato → tomatoes
+            if name.endswith("y"):
+                variants.append(name[:-1] + "ies")  # strawberry → strawberries
+            if name[-1] not in ("s", "h", "x"):
+                variants.append(name + "s")  # carrot → carrots
+            if name.endswith("ch") or name.endswith("sh"):
+                variants.append(name + "es")  # radish → radishes
+
+            for variant in variants:
+                # Word boundary check — ensure we match whole words
+                pattern = r'\b' + re.escape(variant) + r'\b'
+                if re.search(pattern, text_lower):
+                    matched.append(spec)
+                    break
+
+        return matched
 
     @staticmethod
     def _parse_plant_names(text: str) -> list[str]:
-        """Parse comma and 'and'-separated plant names from free text."""
+        """Parse comma and 'and'-separated plant names from free text.
+
+        Used for clean input like "tomatoes, basil and peppers".
+        For natural language, use _match_plants_from_text instead.
+        """
         normalised = re.sub(r"\band\b", ",", text, flags=re.IGNORECASE)
         parts = [part.strip() for part in normalised.split(",")]
         return [p for p in parts if p]
