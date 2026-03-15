@@ -36,7 +36,7 @@ class OnboardingService:
     async def get_welcome_message(self) -> str:
         """First message — ask what they want to grow. That's it."""
         return (
-            "Hey! I'm Sage, your gardening mate \U0001f331 "
+            "Hey! I'm Sage, your gardening coach \U0001f331 "
             "What are you thinking of growing?"
         )
 
@@ -144,8 +144,10 @@ class OnboardingService:
 
         return (
             f"{location} \u2014 nice! Your soil's {soil_desc} round there. "
-            f"Right, I'm all set up for you. Ask me anything about growing "
-            f"or tell me what you've planted and I'll keep you right \U0001f331"
+            f"Right, I'm all set up for you. I'll send you a message whenever "
+            f"your plants need attention \u2014 watering, planting out, weather "
+            f"warnings, that sort of thing. You don't need to remember, I'll "
+            f"keep track for you \U0001f331"
         )
 
     async def _create_plants(self, plant_names, user, garden, session):
