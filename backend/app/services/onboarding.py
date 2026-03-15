@@ -75,8 +75,8 @@ class OnboardingService:
 
     async def _handle_postcode(self, user: User, message: str, session: AsyncSession) -> str:
         """User gave postcode. Look up location, create garden, give first task."""
-        postcode = message.strip()
-        result = await self.postcode_service.lookup(postcode)
+        postcode = self._extract_postcode(message)
+        result = await self.postcode_service.lookup(postcode) if postcode else None
 
         if not result:
             return (
@@ -221,6 +221,37 @@ class OnboardingService:
                     break
 
         return matched
+
+    @staticmethod
+    def _extract_postcode(text: str) -> str:
+        """Extract a UK postcode from free text.
+
+        Handles:
+          - Full postcode: "BS3 1AB", "bs31ab"
+          - Outward code: "BS3", "DN35"
+          - Embedded in text: "i'm in bristol, BS3 1AB"
+          - Just the text as-is (fallback)
+        """
+        text = text.strip()
+
+        # Try full UK postcode pattern first (e.g. "BS3 1AB" or "BS31AB")
+        full_match = re.search(
+            r'\b([A-Za-z]{1,2}\d[A-Za-z\d]?\s*\d[A-Za-z]{2})\b',
+            text,
+        )
+        if full_match:
+            return full_match.group(1).strip()
+
+        # Try outward code only (e.g. "BS3", "DN35", "EC1")
+        out_match = re.search(
+            r'\b([A-Za-z]{1,2}\d[A-Za-z\d]?)\b',
+            text,
+        )
+        if out_match:
+            return out_match.group(1).strip()
+
+        # Fallback: return the whole message (let the postcode service handle it)
+        return text
 
     @staticmethod
     def _parse_plant_names(text: str) -> list[str]:
