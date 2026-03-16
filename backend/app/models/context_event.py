@@ -16,7 +16,7 @@ class ContextEvent(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     garden_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("gardens.id", ondelete="CASCADE"))
     plant_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("plants.id", ondelete="CASCADE"))
-    event_type: Mapped[str] = mapped_column(String(50), index=True)
+    event_type: Mapped[str] = mapped_column(String(100), index=True)
     source_agent: Mapped[str | None] = mapped_column(String(50))
     summary: Mapped[str] = mapped_column(Text)
     detail: Mapped[dict | None] = mapped_column(JSONB)

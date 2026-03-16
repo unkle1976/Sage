@@ -24,7 +24,7 @@ class Persona:
     banned_words: list[str] = field(
         default_factory=lambda: ["mate", "as an AI", "language model", "I'm an AI"]
     )
-    max_response_length: int = 500
+    max_response_length: int = 600
     judge_criteria: str = ""  # Extra criteria for this persona
     # Randomisation pools — if set, these are used to vary each run
     _plant_pool: list[str] = field(default_factory=list)

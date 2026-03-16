@@ -208,6 +208,14 @@ def build_tool_handlers(
         summary = _input.get("summary", "")
         detail = _input.get("detail")
 
+        # Sanitise event_type: strip XML/HTML tags, truncate to column limit
+        import re
+        event_type = re.sub(r"<[^>]*>", "", event_type).strip()
+        event_type = event_type[:100] if event_type else "observation"
+
+        # Sanitise source_agent similarly
+        source_agent = "sage"
+
         # Find garden
         garden_stmt = select(Garden).where(
             Garden.user_id == user.id, Garden.is_primary.is_(True)
@@ -229,7 +237,7 @@ def build_tool_handlers(
             user_id=user.id,
             garden_id=garden.id if garden else None,
             event_type=event_type,
-            source_agent="sage",
+            source_agent=source_agent,
             summary=summary,
             detail=detail,
             weather_snapshot=weather_snapshot,

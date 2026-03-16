@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str = ""
     whatsapp_app_secret: str = ""
 
+    # Twilio WhatsApp
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_whatsapp_number: str = ""  # e.g. +14155238886 for sandbox
+
+    # WhatsApp provider: "meta" for direct Graph API, "twilio" for Twilio
+    whatsapp_provider: str = "twilio"
+
     # Slack
     slack_bot_token: str = ""
     slack_app_token: str = ""
