@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 
 import anthropic
@@ -72,7 +73,10 @@ async def check_plants_created(
 def check_banned_words(
     transcript: list[dict], banned_words: list[str]
 ) -> tuple[bool, list[str]]:
-    """Check that no Sage response contains banned words.
+    """Check that no Sage response contains banned words/phrases.
+
+    Single words match on word boundaries (so 'mate' won't match 'climate').
+    Multi-word phrases match as substrings.
 
     Returns (passed, list_of_violations).
     """
@@ -82,7 +86,12 @@ def check_banned_words(
             continue
         content_lower = entry["content"].lower()
         for word in banned_words:
-            if word.lower() in content_lower:
+            term = word.lower()
+            if " " in term:
+                hit = term in content_lower
+            else:
+                hit = re.search(rf"\b{re.escape(term)}\b", content_lower) is not None
+            if hit:
                 violations.append(
                     f"Turn {entry.get('turn', '?')}: found '{word}'"
                 )
